@@ -134,7 +134,9 @@ class SnackBarPresenter extends StatelessWidget {
       provider: messageProvider,
       onChange: (context, value) {
         if (value != null) {
-          _showMessage(context, value);
+          if (ModalRoute.of(context).isCurrent) {
+            _showMessage(context, value);
+          }
         }
       },
       child: child,
