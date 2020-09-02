@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:mono_kit/mono_kit.dart';
+import 'package:state_notifier/state_notifier.dart';
 
 void main() => runApp(
       const ProviderScope(
@@ -33,37 +34,39 @@ class _HomePage extends HookWidget {
 
   @override
   Widget build(BuildContext context) {
-    final controller = useProvider(_homePageProviders(index));
+    final controller = useProvider(_homePageProvider);
     final canPop = useProvider(navigatorKeyProvider).currentState.canPop();
     return Scaffold(
-      key: controller.scaffoldKey,
       appBar: AppBar(title: Text('index: $index')),
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            RaisedButton(
-              child: const Text('Show SnackBar'),
-              onPressed: () => controller.showSnackBarMessage('Hey(　´･‿･｀)'),
-            ),
-            RaisedButton(
-              child: const Text('👉 Navigate to next page'),
-              onPressed: () {
-                Navigator.of(context).push<void>(
-                  MaterialPageRoute(
-                    builder: (context) => _HomePage(
-                      index: index + 1,
-                    ),
-                  ),
-                );
-              },
-            ),
-            if (canPop)
+      body: SnackBarPresenter(
+        messageProvider: snackBarMessageNotifierProvider.state,
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
               RaisedButton(
-                child: const Text('👈 Pop and show SnackBar'),
-                onPressed: controller.popAndShowSnackBar,
+                child: const Text('Show SnackBar'),
+                onPressed: () => controller.showSnackBarMessage('Hey(　´･‿･｀)'),
               ),
-          ],
+              RaisedButton(
+                child: const Text('👉 Navigate to next page'),
+                onPressed: () {
+                  Navigator.of(context).push<void>(
+                    MaterialPageRoute(
+                      builder: (context) => _HomePage(
+                        index: index + 1,
+                      ),
+                    ),
+                  );
+                },
+              ),
+              if (canPop)
+                RaisedButton(
+                  child: const Text('👈 Pop and show SnackBar'),
+                  onPressed: controller.popAndShowSnackBar,
+                ),
+            ],
+          ),
         ),
       ),
       bottomNavigationBar: BottomAppBar(
@@ -82,114 +85,80 @@ class _HomePage extends HookWidget {
 
 final navigatorKeyProvider = Provider((_) => GlobalKey<NavigatorState>());
 
-final _homePageProviders =
-    Provider.autoDispose.family<_HomePageController, int>(
-  (ref, __) {
-    final controller = _HomePageController(ref);
-    ref.onDispose(controller.dispose);
-    return controller;
-  },
+final _homePageProvider = Provider<_HomePageController>(
+  (ref) => _HomePageController(ref),
 );
 
-mixin SnackBarMixin {
-  final GlobalKey<ScaffoldState> scaffoldKey = GlobalKey();
-  SnackBarPresenter get snackBarPresenter;
-  VoidCallback _unregisterSnackBarRegistration;
-
-  @protected
-  void registerToStackBarPresenter() {
-    _unregisterSnackBarRegistration = snackBarPresenter.register(scaffoldKey);
-  }
-
-  @protected
-  void unregisterFromStackBarPresenter() {
-    _unregisterSnackBarRegistration();
-  }
-
-  @protected
-  ScaffoldFeatureController<SnackBar, SnackBarClosedReason> showSnackBarMessage(
-    String message,
-  ) {
-    return snackBarPresenter.showMessage(message);
-  }
-
-  @protected
-  ScaffoldFeatureController<SnackBar, SnackBarClosedReason> showSnackBar(
-    SnackBar snackBar,
-  ) {
-    return snackBarPresenter.show(snackBar);
-  }
-}
-
-class _HomePageController with SnackBarMixin {
-  _HomePageController(this._ref) {
-    registerToStackBarPresenter();
-  }
+class _HomePageController {
+  _HomePageController(this._ref);
 
   final ProviderReference _ref;
 
-  @override
-  SnackBarPresenter get snackBarPresenter =>
-      _ref.read(snackBarPresenterProvider);
-
   void popAndShowSnackBar() {
     _ref.read(navigatorKeyProvider).currentState.pop();
-    // Remove registration before showing SnackBar
-    unregisterFromStackBarPresenter();
     showSnackBarMessage('Came back(　´･‿･｀)');
   }
 
-  void dispose() {
-    unregisterFromStackBarPresenter();
+  void showSnackBarMessage(String message) {
+    _ref.read(snackBarMessageNotifierProvider).showSnackBarMessage(message);
   }
 }
 
-final snackBarPresenterProvider = Provider(
-  (_) => SnackBarPresenter(),
+final snackBarMessageNotifierProvider = StateNotifierProvider(
+  (_) => SnackBarMessageNotifier(),
 );
 
-class SnackBarPresenter {
-  final _scaffoldKeys = <GlobalKey<ScaffoldState>>[];
+class SnackBarMessageNotifier extends StateNotifier<String> {
+  SnackBarMessageNotifier() : super(null);
 
-  VoidCallback register(GlobalKey<ScaffoldState> scaffoldKey) {
-    assert(!_scaffoldKeys.contains(scaffoldKey));
-    _scaffoldKeys.add(scaffoldKey);
-    return () => _unregister(scaffoldKey);
+  void showSnackBarMessage(String message) {
+    if (message != null) {
+      state = message;
+    }
+  }
+}
+
+class SnackBarPresenter extends StatelessWidget {
+  const SnackBarPresenter({
+    @required this.child,
+    @required this.messageProvider,
+    Key key,
+  }) : super(key: key);
+
+  final Widget child;
+  final ProviderBase<Object, String> messageProvider;
+
+  @override
+  Widget build(BuildContext context) {
+    return ProviderListener<String>(
+      provider: messageProvider,
+      onChange: (context, value) {
+        if (value != null) {
+          if (ModalRoute.of(context).isCurrent) {
+            _showMessage(context, value);
+          }
+        }
+      },
+      child: child,
+    );
   }
 
-  void _unregister(GlobalKey<ScaffoldState> key) {
-    assert(_scaffoldKeys.last == key || !_scaffoldKeys.contains(key));
-    _scaffoldKeys.remove(key);
-  }
-
-  ScaffoldFeatureController<SnackBar, SnackBarClosedReason> showMessage(
+  ScaffoldFeatureController<SnackBar, SnackBarClosedReason> _showMessage(
+    BuildContext context,
     String message,
   ) {
-    return show(
+    return _show(
+      context,
       SnackBar(
         content: Text(message),
       ),
     );
   }
 
-  ScaffoldFeatureController<SnackBar, SnackBarClosedReason> show(
+  ScaffoldFeatureController<SnackBar, SnackBarClosedReason> _show(
+    BuildContext context,
     SnackBar snackBar,
   ) {
-    if (_scaffoldKeys.isEmpty) {
-      assert(false, '_scaffoldKeys should not be empty');
-      return null;
-    }
-    // Show SnackBar by using last ScaffoldKey
-    final scaffoldState = _scaffoldKeys.last.currentState;
-    if (scaffoldState == null) {
-      assert(false, 'scaffoldState should not be null');
-      return null;
-    }
-    scaffoldState.removeCurrentSnackBar();
-    return scaffoldState.showSnackBar(snackBar);
-  }
-
-  void dispose() {
-    _scaffoldKeys.clear();
+    return Scaffold.of(context).showSnackBar(snackBar);
   }
 }
